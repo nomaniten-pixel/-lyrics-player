@@ -79,10 +79,10 @@ select{font:inherit;color:var(--text);background:var(--surface);border:1px solid
 <div class="toast" id="toast"></div>
 <dialog id="dlg3"><h3>共有・取り込み</h3>
  <label for="shScope">共有する範囲</label><select id="shScope"></select>
- <div class="row" style="justify-content:flex-start"><button class="btn primary" id="shMake">共有コードを作る</button></div>
- <textarea id="shOut" readonly placeholder="ここに共有コードが表示されます" style="min-height:90px"></textarea>
+ <div class="row" style="justify-content:flex-start"><button class="btn primary" id="shMake">共有リンクを作る</button></div>
+ <textarea id="shOut" readonly placeholder="ここに共有リンクが表示されます" style="min-height:90px"></textarea>
  <div class="row" style="justify-content:flex-start;margin-top:8px"><button class="btn" id="shCopy">コピー</button></div>
- <label for="shIn">共有コードを受け取った場合はここに貼り付け</label>
+ <label for="shIn">共有リンクを受け取った場合はここに貼り付け(リンクを直接開いても取り込めます)</label>
  <textarea id="shIn" style="min-height:90px"></textarea>
  <div class="row"><button class="btn" id="shClose">閉じる</button><button class="btn primary" id="shImport">取り込む</button></div></dialog>
 <dialog id="dlg2"><div id="m2msg" style="margin-bottom:12px;white-space:pre-wrap"></div><input type="text" id="m2in"><div class="row"><button class="btn" id="m2no">キャンセル</button><button class="btn primary" id="m2ok">OK</button></div></dialog>
@@ -268,6 +268,20 @@ function toSrc(u){
 function nameFromUrl(u){try{return base(decodeURIComponent(new URL(u).pathname.split('/').pop()))||'無題'}catch(e){return'無題'}}
 function enc(o){const b=new TextEncoder().encode(JSON.stringify(o));let s='';for(let i=0;i<b.length;i+=8192)s+=String.fromCharCode.apply(null,b.subarray(i,i+8192));return'LP1:'+btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
 function dec(c){c=c.trim();if(!c.startsWith('LP1:'))throw 0;let s=c.slice(4).replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';const bin=atob(s),b=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)b[i]=bin.charCodeAt(i);return JSON.parse(new TextDecoder().decode(b))}
+const b64e=b=>{let s='';for(let i=0;i<b.length;i+=8192)s+=String.fromCharCode.apply(null,b.subarray(i,i+8192));return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')};
+const b64d=t=>{let s=t.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';const x=atob(s),b=new Uint8Array(x.length);for(let i=0;i<x.length;i++)b[i]=x.charCodeAt(i);return b};
+async function pipe(bytes,Ctor){return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new Ctor('deflate-raw'))).arrayBuffer())}
+async function mkLink(o){
+ let b=new TextEncoder().encode(JSON.stringify(o)),tag='s1.';
+ if(window.CompressionStream){try{b=await pipe(b,CompressionStream);tag='s2.'}catch(e){}}
+ return location.href.split('#')[0]+'#'+tag+b64e(b);
+}
+async function readLink(t){
+ t=t.trim();const i=t.lastIndexOf('#');if(i>=0)t=t.slice(i+1);
+ const m=t.match(/^s([12])\.([A-Za-z0-9_-]+)$/);if(!m)throw 0;
+ let b=b64d(m[2]);if(m[1]==='2')b=await pipe(b,DecompressionStream);
+ return JSON.parse(new TextDecoder().decode(b));
+}
 function openShare(){
  const sel=$('shScope');sel.textContent='';
  const add=(v,t)=>{const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)};
@@ -278,20 +292,20 @@ function openShare(){
  $('shOut').value='';$('shIn').value='';$('dlg3').showModal();
 }
 $('shareBtn').onclick=openShare;$('shClose').onclick=()=>$('dlg3').close();
-$('shMake').onclick=()=>{
+$('shMake').onclick=async()=>{
  const sc=$('shScope').value;let ss,pls=[];
  if(sc==='song')ss=[cur];
  else if(sc==='pl'){const p=lists.find(x=>x.id===view.id);ss=curList();pls=p?[p]:[]}
  else{ss=songs;pls=lists}
  const idx=new Map(ss.map((s,i)=>[s.id,i]));
- $('shOut').value=enc({v:1,s:ss.map(s=>({t:s.title,l:s.lyrics||'',u:s.src||''})),p:pls.map(p=>({n:p.name,i:p.songIds.map(i=>idx.get(i)).filter(i=>i!==undefined)}))});
+ $('shOut').value=await mkLink({v:1,s:ss.map(s=>({t:s.title,l:s.lyrics||'',u:s.src||''})),p:pls.map(p=>({n:p.name,i:p.songIds.map(i=>idx.get(i)).filter(i=>i!==undefined)}))});
  const loc=ss.filter(s=>!s.src).length;
  if(loc)toast(loc+'曲は音源がこの端末にあるため、歌詞だけが共有されます(リンクで登録した曲は音源も共有されます)');
 };
 $('shCopy').onclick=async()=>{const t=$('shOut');if(!t.value)return;t.select();try{await navigator.clipboard.writeText(t.value);toast('コピーしました')}catch(e){toast('選択しました。コピーしてください')}};
 $('shImport').onclick=async()=>{
- let o;try{o=dec($('shIn').value)}catch(e){toast('共有コードを読み取れません');return}
- if(!o||!Array.isArray(o.s)){toast('共有コードを読み取れません');return}
+ let o;try{o=await readLink($('shIn').value)}catch(e){toast('共有リンクを読み取れません');return}
+ if(!o||!Array.isArray(o.s)){toast('共有リンクを読み取れません');return}
  const ids=[];
  for(const x of o.s.slice(0,500)){
   const raw=x.u?String(x.u):'',u=raw?toSrc(raw):null,title=String(x.t||'無題').slice(0,200);
@@ -305,7 +319,7 @@ $('shImport').onclick=async()=>{
   const pl=await makeList(String(p.n||'共有プレイリスト').slice(0,100));
   pl.songIds=(p.i||[]).map(i=>ids[i]).filter(i=>i!==undefined);await dbPut('playlists',pl);
  }
- $('dlg3').close();await reload();toast(ids.length+'曲を取り込みました');
+ $('dlg3').close();await reload();toast(ids.length+'曲を取り込みました');try{history.replaceState(null,'',location.pathname+location.search)}catch(e){}
 };
 
 /* ---- dialog (single add / edit) ---- */
@@ -373,6 +387,7 @@ addEventListener('drop',async e=>{
  await reload();
  let last=null;try{last=parseInt(localStorage.getItem('last'))}catch(e){}
  if(last&&songs.find(s=>s.id===last))select(last);
+ if(/^#s[12]\./.test(location.hash)){openShare();$('shIn').value=location.href;toast('共有リンクが開かれました。「取り込む」を押すと追加されます')}
 })();
 </script>
 </body>
